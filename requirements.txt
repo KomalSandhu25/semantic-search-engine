@@ -1,0 +1,16 @@
+# Core ML / Search
+sentence-transformers==2.7.0
+faiss-cpu==1.8.0
+
+# API
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic-settings==2.2.1
+
+# UI
+streamlit==1.35.0
+
+# Data
+numpy==1.26.4
+pandas==2.2.2
+datasets==2.19.0
