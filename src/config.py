@@ -1,102 +1,78 @@
 """Application-wide configuration loaded from environment variables.
 
-Uses pydantic-settings so every value is validated and type-checked at
-startup.  All settings have sensible defaults so the service can run
-out-of-the-box with no .env file; the defaults are identical to those
-documented in .env.example.
+Uses pydantic-settings so every value can be overridden via a .env file
+or real environment variables without touching source code.
 
-Example
--------
+Typical usage
+-------------
 >>> from src.config import settings
->>> print(settings.top_k_retrieve)
-100
+>>> print(settings.bi_encoder_model)
+'sentence-transformers/all-MiniLM-L6-v2'
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Validated application settings sourced from environment / .env file.
+    """Central configuration object for the semantic search engine.
+
+    All fields map 1-to-1 to environment variables (case-insensitive).
+    Defaults represent sensible values for local development.
 
     Attributes
     ----------
     bi_encoder_model:
-        Hugging Face model identifier for the sentence-transformer used in
-        the first-stage dense retrieval step.
+        Hugging Face model ID (or local path) for the bi-encoder used in
+        the first retrieval stage.  Bi-encoders encode queries and documents
+        independently, enabling sub-millisecond ANN lookup via FAISS.
     cross_encoder_model:
-        Hugging Face model identifier for the cross-encoder used in the
-        second-stage reranking step.
+        Hugging Face model ID for the cross-encoder re-ranker.  Cross-
+        encoders jointly encode (query, document) pairs for higher accuracy
+        at the cost of more compute -- therefore applied only to the top-K
+        bi-encoder candidates.
     faiss_index_path:
-        Filesystem path for the persisted FAISS flat-L2 index.
+        Filesystem path where the serialised FAISS index lives.  The
+        directory is created automatically on first build.
     top_k_retrieve:
-        Number of candidate passages fetched from the FAISS index before
-        reranking.  Governs recall ceiling.
+        Number of nearest-neighbour candidates to fetch from FAISS during
+        the recall stage.  Higher values improve recall at the cost of more
+        cross-encoder calls.
     top_k_rerank:
-        Number of results returned to the caller after the cross-encoder
-        reranks the ``top_k_retrieve`` candidates.
+        Final number of results returned to the caller after cross-encoder
+        re-ranking.  Must be <= top_k_retrieve.
+
+    Example
+    -------
+    >>> from src.config import settings
+    >>> assert settings.top_k_rerank <= settings.top_k_retrieve
     """
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
-    bi_encoder_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        description="Hugging Face model name for bi-encoder (retrieval stage).",
-    )
-    cross_encoder_model: str = Field(
-        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
-        description="Hugging Face model name for cross-encoder (reranking stage).",
-    )
-    faiss_index_path: Path = Field(
-        default=Path("data/index/faiss.index"),
-        description="Path to the persisted FAISS index file.",
-    )
-    top_k_retrieve: int = Field(
-        default=100,
-        ge=1,
-        le=10_000,
-        description="Candidate count fetched from FAISS before reranking.",
-    )
-    top_k_rerank: int = Field(
-        default=10,
-        ge=1,
-        description="Final result count returned after cross-encoder reranking.",
-    )
+    bi_encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    faiss_index_path: Path = Path("data/indices/corpus.index")
+    top_k_retrieve: int = 100
+    top_k_rerank: int = 10
 
-    # ------------------------------------------------------------------
-    # Validators
-    # ------------------------------------------------------------------
-
-    @field_validator("top_k_rerank", mode="after")
-    @classmethod
-    def rerank_lte_retrieve(cls, v: int, info) -> int:  # noqa: ANN001
-        """Ensure ``top_k_rerank`` does not exceed ``top_k_retrieve``.
-
-        Args:
-            v: The proposed value for ``top_k_rerank``.
-            info: Pydantic validation context carrying already-validated fields.
-
-        Returns:
-            The validated value for ``top_k_rerank``.
-
-        Raises:
-            ValueError: If ``top_k_rerank`` > ``top_k_retrieve``.
-        """
-        retrieve = info.data.get("top_k_retrieve", 100)
-        if v > retrieve:
+    def model_post_init(self, __context: object) -> None:
+        """Validate cross-field constraints after individual field parsing."""
+        if self.top_k_rerank > self.top_k_retrieve:
             raise ValueError(
-                f"top_k_rerank ({v}) must be <= top_k_retrieve ({retrieve})."
+                f"top_k_rerank ({self.top_k_rerank}) must be <= "
+                f"top_k_retrieve ({self.top_k_retrieve})"
             )
-        return v
+        self.faiss_index_path.parent.mkdir(parents=True, exist_ok=True)
 
 
-# Module-level singleton — import this throughout the codebase.
-settings: Settings = Settings()
+#: Module-level singleton -- import this everywhere instead of instantiating.
+settings = Settings()

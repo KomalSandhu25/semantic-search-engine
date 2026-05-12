@@ -1,14 +1,23 @@
-"""Model sub-package for the semantic search engine.
+"""Encoder model wrappers for the two-stage retrieval pipeline.
 
-This package will expose:
+Stage 1 -- Bi-encoder (recall)
+    Encodes queries and documents into a shared dense vector space using a
+    Siamese network architecture.  At search time only the query is encoded;
+    document embeddings are pre-computed and stored in a FAISS index for
+    sub-millisecond ANN retrieval.
 
-- ``BiEncoder``  — wraps a ``sentence-transformers`` model to produce dense
-  embeddings for both documents and queries (see ``bi_encoder.py``).
-- ``CrossEncoder`` — wraps a cross-encoder model to score (query, passage)
-  pairs for precision reranking (see ``cross_encoder.py``).
+Stage 2 -- Cross-encoder (precision / re-ranking)
+    Takes the top-K bi-encoder candidates and scores each (query, document)
+    pair jointly.  More expensive than the bi-encoder but substantially more
+    accurate, because the attention layers can attend to both sequences
+    simultaneously.
 
-Both classes will be registered here on subsequent days so the rest of the
-codebase can import them via::
-
-    from src.models import BiEncoder, CrossEncoder
+Submodules
+----------
+bi_encoder
+    BiEncoder -- wraps SentenceTransformer for batch encoding and
+    FAISS-compatible L2-normalised embeddings.
+cross_encoder
+    CrossEncoder -- wraps sentence_transformers.CrossEncoder for
+    pairwise re-ranking.
 """

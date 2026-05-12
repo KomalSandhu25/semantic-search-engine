@@ -4,44 +4,50 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.egg
 *.egg-info/
 dist/
 build/
-*.egg
-.eggs/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+*.so
 
-# Virtual envs
+# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # Environment / secrets
 .env
 *.env
 
-# FAISS indexes and data artifacts
+# FAISS indices
 *.index
 *.faiss
-data/raw/
-data/processed/
-*.pkl
-*.npy
-
-# OS
-.DS_Store
-Thumbs.db
+data/indices/
 
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
 # Logs
-logs/
 *.log
+logs/
+
+# Model cache
+.cache/
+models/cache/
