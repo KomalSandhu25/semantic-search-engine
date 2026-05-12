@@ -4,31 +4,21 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-*.egg
 *.egg-info/
 dist/
 build/
-eggs/
-parts/
-var/
-sdist/
-develop-eggs/
-.installed.cfg
-lib/
-lib64/
-*.so
+*.egg
+.eggs/
 
 # Virtual environments
 .venv/
 venv/
 env/
-ENV/
 
-# Environment / secrets
+# Secrets — never commit the real .env
 .env
-*.env
 
-# FAISS indices
+# FAISS index files
 *.index
 *.faiss
 data/indices/
@@ -38,16 +28,21 @@ data/indices/
 *.ipynb
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Test / coverage artefacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
 
 # Logs
 *.log
 logs/
-
-# Model cache
-.cache/
-models/cache/

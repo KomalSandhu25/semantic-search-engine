@@ -1,105 +1,146 @@
 # Semantic Search Engine
 
-A production-grade two-stage semantic search system built with
-**sentence-transformers**, **FAISS**, **FastAPI**, and **Streamlit**.
+A production-ready semantic search system that combines **dense retrieval**
+(bi-encoder + FAISS) with **neural re-ranking** (cross-encoder) to deliver
+both high recall and high precision over large text corpora.
 
-## Architecture
+---
+
+## Two-Stage Retrieval Architecture
 
 ```
-Query
-  |
-  v
-+------------------------------------------+
-|  Stage 1 - Bi-Encoder  (Recall)          |
-|                                          |
-|  * Encodes the query with a lightweight  |
-|    sentence transformer (e.g. MiniLM).   |
-|  * Performs approximate nearest-         |
-|    neighbour search on a FAISS flat-IP   |
-|    index pre-built from the corpus.      |
-|  * Returns top-K (default 100) hits in   |
-|    < 5 ms regardless of corpus size.     |
-+-------------------+----------------------+
-                    |  top-100 candidates
-                    v
-+------------------------------------------+
-|  Stage 2 - Cross-Encoder  (Precision)    |
-|                                          |
-|  * Scores every (query, candidate) pair  |
-|    jointly using a re-ranking model      |
-|    (e.g. ms-marco-MiniLM-L-6-v2).        |
-|  * Produces calibrated relevance scores  |
-|    by attending to both sequences.       |
-|  * Returns top-N (default 10) results    |
-|    sorted by re-ranked score.            |
-+------------------------------------------+
+                          Query
+                            │
+                            ▼
+          ┌─────────────────────────────────────────┐
+          │  Stage 1 — Recall  (Bi-Encoder + FAISS) │
+          │                                         │
+          │  1. Encode query → dense vector (384-d) │
+          │  2. ANN search in FAISS index           │
+          │     → top-K candidates  (default K=100) │
+          └─────────────────────────────────────────┘
+                            │  100 candidate passages
+                            ▼
+          ┌─────────────────────────────────────────┐
+          │  Stage 2 — Precision  (Cross-Encoder)   │
+          │                                         │
+          │  3. Score every (query, passage) pair   │
+          │     → relevance logit per pair          │
+          │  4. Sort by score → top-N results       │
+          │     (default N=10)                      │
+          └─────────────────────────────────────────┘
+                            │  10 re-ranked results
+                            ▼
+               FastAPI  /search  ──►  Streamlit UI
 ```
 
 ### Why two stages?
 
-| Property          | Bi-encoder          | Cross-encoder        |
-|-------------------|---------------------|----------------------|
-| Encoding strategy | Independent         | Joint                |
-| Latency           | Sub-millisecond     | ~10-50 ms / pair     |
-| Accuracy          | Good recall         | High precision       |
-| Scalability       | Millions of docs    | Hundreds of pairs    |
+|                  | Bi-Encoder                    | Cross-Encoder                  |
+|------------------|-------------------------------|--------------------------------|
+| **Query latency**| O(1) — ANN lookup             | O(K) — K forward passes        |
+| **Recall**       | ★★★★☆ — good                 | ★★★★★ — excellent              |
+| **Precision**    | ★★★☆☆ — moderate             | ★★★★★ — excellent              |
+| **Use case**     | Retrieve candidates at scale  | Re-rank a small candidate set  |
 
-The bi-encoder trades some accuracy for speed, enabling retrieval from
-millions of documents in milliseconds.  The cross-encoder then re-ranks the
-small candidate set with near-reader-level accuracy -- the best of both worlds.
+The bi-encoder encodes queries and passages **independently**, allowing
+passage embeddings to be pre-computed and stored in a FAISS index.  At
+query time only the query needs to be encoded — ANN search is then O(1)
+in the corpus size.
+
+The cross-encoder attends jointly over the (query, passage) pair, giving
+it access to fine-grained cross-attention signals that the bi-encoder
+misses.  Because it is O(K) per query, it runs only on the top-K
+candidates rather than the full corpus.
+
+---
 
 ## Project Structure
 
 ```
 semantic-search-engine/
 ├── src/
-│   ├── config.py          # Pydantic-settings configuration
-│   ├── models/            # Bi- and cross-encoder wrappers
-│   ├── indexer/           # FAISS index build & load utilities
-│   ├── retriever/         # Two-stage retrieval pipeline
-│   └── api/               # FastAPI application
-├── app/
-│   └── streamlit_app.py   # Streamlit demo UI
-├── tests/                 # pytest test suite
-├── data/
-│   └── indices/           # FAISS index files (git-ignored)
+│   ├── __init__.py
+│   ├── config.py              # pydantic-settings: all env-vars in one place
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── bi_encoder.py      # BiEncoder wrapper          (Day 2)
+│   │   └── cross_encoder.py   # CrossEncoder wrapper       (Day 2)
+│   ├── indexing/
+│   │   ├── __init__.py
+│   │   └── faiss_index.py     # Index build & ANN query    (Day 3)
+│   ├── search/
+│   │   ├── __init__.py
+│   │   └── pipeline.py        # End-to-end search pipeline (Day 4)
+│   └── api/
+│       ├── __init__.py
+│       └── app.py             # FastAPI routes             (Day 5)
+├── ui/
+│   └── app.py                 # Streamlit frontend         (Day 6)
+├── tests/
 ├── .env.example
 ├── requirements.txt
 └── README.md
 ```
 
+---
+
 ## Quick Start
 
 ```bash
+# 1. Clone & install
 git clone https://github.com/KomalSandhu25/semantic-search-engine.git
 cd semantic-search-engine
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+# 2. Configure
 cp .env.example .env
-python -m src.indexer.build
-uvicorn src.api.main:app --reload
-streamlit run app/streamlit_app.py
+# Edit .env to choose models / paths
+
+# 3. Build the FAISS index (Day 3+)
+python -m src.indexing.build
+
+# 4. Start the REST API
+uvicorn src.api.app:app --reload
+
+# 5. Open the Streamlit UI
+streamlit run ui/app.py
 ```
+
+---
 
 ## Configuration
 
-| Variable              | Default                                    | Description                                 |
-|-----------------------|--------------------------------------------|---------------------------------------------|
-| `BI_ENCODER_MODEL`    | `sentence-transformers/all-MiniLM-L6-v2`  | Bi-encoder for first-stage retrieval        |
-| `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2`    | Cross-encoder for re-ranking                |
-| `FAISS_INDEX_PATH`    | `data/indices/corpus.index`               | Path to read/write the FAISS flat-IP index  |
-| `TOP_K_RETRIEVE`      | `100`                                      | Candidate count for bi-encoder recall stage |
-| `TOP_K_RERANK`        | `10`                                       | Final result count after re-ranking         |
+All tuneable values live in `.env` (copy from `.env.example`):
+
+| Variable              | Default                          | Description                          |
+|-----------------------|----------------------------------|--------------------------------------|
+| `BI_ENCODER_MODEL`    | `all-MiniLM-L6-v2`               | HF model used to build the index     |
+| `CROSS_ENCODER_MODEL` | `ms-marco-MiniLM-L-6-v2`         | HF model used for re-ranking         |
+| `FAISS_INDEX_PATH`    | `data/indices/corpus.index`      | Persistent index location            |
+| `TOP_K_RETRIEVE`      | `100`                            | Candidate pool size (bi-encoder)     |
+| `TOP_K_RERANK`        | `10`                             | Final result count (cross-encoder)   |
+
+---
+
+## Roadmap
+
+- [x] Day 1 — Project scaffold & architecture design
+- [ ] Day 2 — Bi-encoder and cross-encoder model wrappers
+- [ ] Day 3 — FAISS index builder & ANN query interface
+- [ ] Day 4 — End-to-end two-stage search pipeline
+- [ ] Day 5 — FastAPI REST service (`/search`, `/index` endpoints)
+- [ ] Day 6 — Streamlit UI + end-to-end demo
+
+---
 
 ## Tech Stack
 
-- **[sentence-transformers](https://www.sbert.net/)** -- bi-encoder & cross-encoder model hosting
-- **[FAISS](https://github.com/facebookresearch/faiss)** -- GPU-optional ANN index
-- **[FastAPI](https://fastapi.tiangolo.com/)** -- async REST API
-- **[Streamlit](https://streamlit.io/)** -- interactive search UI
-- **[Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)** -- typed configuration
-
-## License
-
-MIT
+| Library | Role |
+|---|---|
+| [sentence-transformers](https://www.sbert.net/) | Pre-trained bi- and cross-encoders |
+| [FAISS](https://github.com/facebookresearch/faiss) | Billion-scale approximate nearest-neighbour search |
+| [FastAPI](https://fastapi.tiangolo.com/) | Async REST API framework |
+| [Streamlit](https://streamlit.io/) | Rapid ML web UI |
+| [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) | Typed, validated configuration |

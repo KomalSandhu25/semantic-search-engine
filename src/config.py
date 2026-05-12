@@ -1,13 +1,16 @@
-"""Application-wide configuration loaded from environment variables.
+"""Application configuration loaded from environment variables.
 
-Uses pydantic-settings so every value can be overridden via a .env file
-or real environment variables without touching source code.
+All settings are declared once as a typed ``Settings`` class backed by
+pydantic-settings.  Values are read from the process environment and,
+optionally, a ``.env`` file at project root.
 
-Typical usage
--------------
+Usage
+-----
 >>> from src.config import settings
->>> print(settings.bi_encoder_model)
+>>> settings.bi_encoder_model
 'sentence-transformers/all-MiniLM-L6-v2'
+>>> settings.top_k_retrieve
+100
 """
 
 from __future__ import annotations
@@ -18,44 +21,40 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Central configuration object for the semantic search engine.
-
-    All fields map 1-to-1 to environment variables (case-insensitive).
-    Defaults represent sensible values for local development.
+    """Validated, typed application settings.
 
     Attributes
     ----------
     bi_encoder_model:
-        Hugging Face model ID (or local path) for the bi-encoder used in
-        the first retrieval stage.  Bi-encoders encode queries and documents
-        independently, enabling sub-millisecond ANN lookup via FAISS.
+        Hugging Face model ID used for the bi-encoder (recall stage).
+        The model encodes queries and passages into a shared dense vector
+        space.  Passage vectors are pre-computed and stored in the FAISS
+        index; at query time only the query is encoded.
     cross_encoder_model:
-        Hugging Face model ID for the cross-encoder re-ranker.  Cross-
-        encoders jointly encode (query, document) pairs for higher accuracy
-        at the cost of more compute -- therefore applied only to the top-K
-        bi-encoder candidates.
+        Hugging Face model ID used for the cross-encoder (re-ranking stage).
+        Takes a ``(query, passage)`` pair and returns a scalar relevance
+        score.  Slower than the bi-encoder but significantly more precise.
     faiss_index_path:
-        Filesystem path where the serialised FAISS index lives.  The
-        directory is created automatically on first build.
+        Filesystem path where the FAISS index is stored.  The parent
+        directory is created automatically when the index is first built.
     top_k_retrieve:
-        Number of nearest-neighbour candidates to fetch from FAISS during
-        the recall stage.  Higher values improve recall at the cost of more
-        cross-encoder calls.
+        Number of candidate passages retrieved from the FAISS index during
+        the recall stage.  Must be larger than ``top_k_rerank``.
     top_k_rerank:
-        Final number of results returned to the caller after cross-encoder
-        re-ranking.  Must be <= top_k_retrieve.
+        Number of passages returned to the caller after the cross-encoder
+        re-ranks the ``top_k_retrieve`` candidates.
 
-    Example
-    -------
-    >>> from src.config import settings
-    >>> assert settings.top_k_rerank <= settings.top_k_retrieve
+    Examples
+    --------
+    >>> s = Settings()
+    >>> s.top_k_retrieve > s.top_k_rerank
+    True
     """
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore",
     )
 
     bi_encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -64,15 +63,29 @@ class Settings(BaseSettings):
     top_k_retrieve: int = 100
     top_k_rerank: int = 10
 
-    def model_post_init(self, __context: object) -> None:
-        """Validate cross-field constraints after individual field parsing."""
-        if self.top_k_rerank > self.top_k_retrieve:
-            raise ValueError(
-                f"top_k_rerank ({self.top_k_rerank}) must be <= "
-                f"top_k_retrieve ({self.top_k_retrieve})"
-            )
-        self.faiss_index_path.parent.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # Derived helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def faiss_index_dir(self) -> Path:
+        """Parent directory of :attr:`faiss_index_path`.
+
+        Returns
+        -------
+        Path
+            Directory that must exist before the index can be written to
+            disk.
+
+        Examples
+        --------
+        >>> s = Settings(faiss_index_path="data/indices/corpus.index")
+        >>> s.faiss_index_dir
+        PosixPath('data/indices')
+        """
+        return self.faiss_index_path.parent
 
 
-#: Module-level singleton -- import this everywhere instead of instantiating.
+# Module-level singleton — callers should import this rather than
+# instantiating Settings() themselves, so the .env file is read once.
 settings = Settings()
