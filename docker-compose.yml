@@ -1,0 +1,67 @@
+# Docker Compose for the Semantic Search Engine
+# ---
+# Services:
+#   api       — FastAPI backend  (port 8000)
+#   streamlit — Streamlit UI     (port 8501)
+#
+# Usage:
+#   docker compose up --build
+#   docker compose up -d
+#   docker compose logs -f api
+#   docker compose down
+
+version: "3.9"
+
+services:
+
+  api:
+    build:
+      context: .
+      target: api
+    image: semantic-search-engine:api
+    container_name: semantic_search_api
+    ports:
+      - "8000:8000"
+    environment:
+      - BI_ENCODER_MODEL=${BI_ENCODER_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - CROSS_ENCODER_MODEL=${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - FAISS_INDEX_PATH=${FAISS_INDEX_PATH:-/app/data/indices/corpus.index}
+      - TOP_K_RETRIEVE=${TOP_K_RETRIEVE:-100}
+      - TOP_K_RERANK=${TOP_K_RERANK:-10}
+    volumes:
+      - index_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - search_net
+
+  streamlit:
+    build:
+      context: .
+      target: streamlit
+    image: semantic-search-engine:streamlit
+    container_name: semantic_search_ui
+    ports:
+      - "8501:8501"
+    environment:
+      - SEARCH_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - search_net
+
+volumes:
+  index_data:
+    driver: local
+
+networks:
+  search_net:
+    driver: bridge
